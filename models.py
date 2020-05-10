@@ -1,26 +1,28 @@
-# TODO: add a Mask-RCNN model and maybe some other segmentation models?
-# or object detection models (for the competition)
-
 from torch import nn
 
 
-class BackBone(nn.Module):
-    def __init__(self,
-                 net):
-        super().__init__()
-        # ecnoder
+class Model(nn.Module):
+    """ResNet-Based Model."""
 
+    def __init__(self, resnet_model, num_classes=4):
+        """Initialize."""
+        super().__init__()
         self.features = nn.Sequential(
-            net.conv1,
-            net.bn1,
-            net.relu,
-            net.maxpool,
-            net.layer1,
-            net.layer2,
-            net.layer3,
-            net.layer4
+            resnet_model.conv1,
+            resnet_model.bn1,
+            resnet_model.relu,
+            resnet_model.maxpool,
+            resnet_model.layer1,
+            resnet_model.layer2,
+            resnet_model.layer3,
+            resnet_model.layer4,
+            resnet_model.avgpool
         )
-        self.out_channels = net.layer4[-1].conv3.out_channels
+        self.classifier = nn.Linear(2048, 4)
 
     def forward(self, x):
-        return self.features(x)
+        """Run Forward pass."""
+        x = self.features(x)
+        x = x.view(x.shape[0], -1)
+        x = self.classifier(x)
+        return x
