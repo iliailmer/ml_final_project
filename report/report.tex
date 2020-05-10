@@ -1,6 +1,7 @@
 \documentclass[letterpaper]{article}
 \usepackage{a4wide}
 \usepackage{arxiv}
+\usepackage[OT1]{fontenc} 
 \usepackage{hyperref}       % hyperlinks
 \usepackage{url}            % simple URL typesetting
 \usepackage{booktabs}       % professional-quality tables
@@ -9,21 +10,27 @@
 \usepackage{microtype}      % microtypography
 \usepackage{lipsum}
 \usepackage{graphicx}
-
-\title{Application of New ResNeSt-50 Architecture to Object Segmentation: A Proposal}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\xvec}{\mathrm{x}}
+\usepackage[backend=biber,
+style=numeric]{biblatex}
+\addbibresource{references.bib}
+\title{ALASKA2: Image Steganalysis Competition. A Final Project Proposal}
 
 
 \author{
     Ilia Ilmer \\
   Graduate Center CUNY \\
+  Department of Computer Science \\
   \texttt{iilmer@gradcenter.cuny.edu} \\
 }
 
 \begin{document}
 \maketitle
-\begin{abstract}
-  Abstract
-\end{abstract}
+% \begin{abstract}
+%   Abstract
+% \end{abstract}
 
 
 % keywords can be removed
@@ -31,7 +38,42 @@
 
 \section{Introduction}
 
+In May, 2020, Troy University of Technology organized a competition on Kaggle.com. The goal of that competition is to analyze a collection of images and predict whether a particular image contains a secret message or not.
 
-\section{Task description}
-\label{sec:headings}
+In my project, I will identify reliable and promising models that will help me in solving the task. I will define the task as a multi-class classification problem to simplify the approach.
+\section{Task description. Steganalysis}
+Steganalysis is a scientific discipline that studies various forms of data in order to determine whether or not a secret message is concealed in that data.
+
+In this specific competition, 75,000 unique images have been used as a cover for the secret message. While we are not required to discover the message itself, we would like to predict the probability that a given image contains one.
+
+There are three unique ways the message has been encoded into the image, namely, JMiPOD~\cite{jmipod}, JUNIWARD~\cite{juniward}, and UERD~\cite{uerd}. Each method is applied to all 75,000 original covers creating in total 225,000 images that have encodings of different types.
+
+Each method encodes the message using the JPEG conversion algorithm. More specifically, during the JPEG compression, the message is encoded through DCT coefficients and is hidden from the viewer. This is the main goal of steganalysis: how can one tell if an image has a secret or not?
+
+\section{Preliminary description of the approach}
+
+In this section I would like to outline my initial idea for the project and possible improvements. As a start, one is tempted to take advantage of the power provided by deep neural networks. Some advanced architectures would most certainly be able to catch any intricate differences between an image with one encoding or another. I would like to pose the problem as a 4-class classification task in the following manner.
+
+Consider a dataset of 300,000 images of which there are 4 classes
+\[ \begin{cases}
+    0 -\text{cover},     \\
+    1 - \text{jmipod},   \\
+    2 - \text{juniward}, \\
+    3 - \text{uerd}.
+  \end{cases} \]
+The classes arise naturally in this setting and, furthermore, they are perfectly balanced and we need not worry about imbalanced data when sampling.
+
+We will then train a neural network \(\ F \) on this collection of images \( \X = \{ \xvec_k: k=0,1,2,4 \} \) to maximize the key metric of the competition: area under ROC curve with weights. As per the competition requirements, the submission's true positive rate values between 0 and 0.4 have weight 2 while the rest carry weight 1.
+
+To summarize, we must maximize the weighted-AUC metric on a 4-class classification problem in this setup for the competition.
+
+% \subsection{Alternative setups}
+
+% As an alternative, we might consider a binary classification problem as follows. 
+
+% \section{Baseline Training setup}
+
+
+
+\printbibliography
 \end{document}
