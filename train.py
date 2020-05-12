@@ -146,7 +146,7 @@ for epoch in range(num_epochs):
     epoch_loss = running_loss / (len(train_loader))
     train_loss.append(epoch_loss)
     print('Training Loss: {:.8f}'.format(epoch_loss))
-    scheduler.step(epoch_loss)
+
     progress_bar_valid = tqdm(valid_loader, total=int(len(valid_loader)))
     model.eval()
     running_loss = 0.
@@ -177,6 +177,7 @@ for epoch in range(num_epochs):
         auc_score = alaska_weighted_auc(y_true, bin_proba)
     print(
         f'Val Loss: {epoch_loss:.3}, Weighted AUC:{auc_score:.3}, Acc: {acc:.3}')
+    scheduler.step(acc)
 
     torch.save(model.state_dict(),
                f"epoch_{epoch}_val_loss_{epoch_loss:.3}_auc_{auc_score:.3}.pth")
