@@ -21,8 +21,7 @@ def alaska_weighted_auc(y_true, y_valid):
     # size of subsets
     areas = np.array(tpr_thresholds[1:]) - np.array(tpr_thresholds[:-1])
 
-    # The total area is normalized by the sum of weights such that the
-    # final weighted AUC is between 0 and 1.
+    # The total area is normalized by the sum of weights such that the final weighted AUC is between 0 and 1.
     normalization = np.dot(areas, weights)
 
     competition_metric = 0
@@ -30,7 +29,7 @@ def alaska_weighted_auc(y_true, y_valid):
         y_min = tpr_thresholds[idx]
         y_max = tpr_thresholds[idx + 1]
         mask = (y_min < tpr) & (tpr < y_max)
-
+        # pdb.set_trace()
         x_padding = np.linspace(fpr[mask][-1], 1, 100)
 
         x = np.concatenate([fpr[mask], x_padding])
@@ -52,13 +51,10 @@ def get_train_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
         albu.Resize(*size),
-        albu.GaussianBlur(5, p=p),
-        albu.GaussNoise((1, 10), p=p),
-        albu.OneOf([albu.OneOf([albu.CLAHE(),
-                                albu.Equalize()], p=p),
-                    albu.RGBShift(p=p)], p=p),
         albu.ShiftScaleRotate(p=p),
-        albu.Normalize(),
+        albu.ImageCompression(75, 99),
+        albu.Flip(p=p),
+        albu.ToFloat(255),
         ToTensorV2()  # albu.Lambda(image=to_tensor)
     ])
 
@@ -67,16 +63,16 @@ def get_valid_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
         albu.Resize(*size),
-        albu.Normalize(),
+        albu.ToFloat(255),
         ToTensorV2()  # albu.Lambda(image=to_tensor)
     ])
 
 
-def get_loader(keys, labels, augm_func, size,
+def get_loader(dataframe, augm_func, size,
                bs, shuffle, stage, num_workers=2):
     return DataLoader(
         ALASKAData(
-            keys, labels, augm_func(
+            dataframe, augm_func(
                 size
             ), stage=stage
         ),
