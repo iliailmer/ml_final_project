@@ -1,3 +1,5 @@
+from catalyst.core import State
+import torch
 from dataset import ALASKAData
 import numpy as np
 import albumentations as albu
@@ -6,10 +8,12 @@ from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader
 import cv2
 import matplotlib.pyplot as plt
-
+from torch.nn import functional as F
 
 from sklearn import metrics
 import numpy as np
+
+from catalyst.dl.callbacks import MetricManagerCallback, MetricCallback
 
 
 def alaska_weighted_auc(y_true, y_valid):
@@ -43,6 +47,72 @@ def alaska_weighted_auc(y_true, y_valid):
     return competition_metric / normalization
 
 
+def alaska_weighted_auc_modified(y_pred_proba, targets):
+    y_valid = np.zeros((len(y_pred_proba),))
+    temp = y_pred_proba[targets != 0, 1:]
+    y_valid[targets != 0] = temp.sum(1)
+    y_valid[targets == 0] = y_pred_proba[targets == 0, 0]
+    y_true = np.array(targets[:])
+    y_true[y_true != 0] = 1
+
+    tpr_thresholds = [0.0, 0.4, 1.0]
+    weights = [2,   1]
+
+    fpr, tpr, thresholds = metrics.roc_curve(y_true, y_valid, pos_label=1)
+
+    # size of subsets
+    areas = np.array(tpr_thresholds[1:]) - np.array(tpr_thresholds[:-1])
+
+    # The total area is normalized by the sum of weights such that the
+    # final weighted AUC is between 0 and 1.
+    normalization = np.dot(areas, weights)
+
+    competition_metric = 0
+    for idx, weight in enumerate(weights):
+        y_min = tpr_thresholds[idx]
+        y_max = tpr_thresholds[idx + 1]
+        mask = (y_min < tpr) & (tpr < y_max)
+        if mask.sum() == 0:
+            continue
+
+        x_padding = np.linspace(fpr[mask][-1], 1, 100)
+
+        x = np.concatenate([fpr[mask], x_padding])
+        y = np.concatenate([tpr[mask], [y_max] * len(x_padding)])
+        y = y - y_min  # normalize such that curve starts at y=0
+        score = metrics.auc(x, y)
+        submetric = score * weight
+        best_subscore = (y_max - y_min) * weight
+        competition_metric += submetric
+
+    return competition_metric / normalization
+
+
+class wAUC(MetricCallback):
+    def __init__(self, prefix='wAUC',
+                 metric_fn=alaska_weighted_auc_modified,
+                 input_key='targets',
+                 output_key='logits'):
+        super().__init__(prefix, metric_fn,
+                         input_key=input_key,
+                         output_key=output_key)
+        self.y_true, self.val_preds_proba = [], []
+
+    def on_batch_end(self, state: State):
+        self.y_true.extend(
+            state.input['targets'].detach().cpu().numpy().astype(int))
+        self.val_preds_proba.extend(
+            F.softmax(state.output['logits'], 1).detach().cpu().numpy())
+
+    def on_epoch_end(self, state: State) -> None:
+        """Computes the metric and add it to batch metrics."""
+        self.val_preds_proba = np.array(self.val_preds_proba)
+        self.y_true = np.array(self.y_true)
+        metric = self.metric_fn(self.val_preds_proba,
+                                self.y_true) * self.multiplier
+        state.epoch_metrics[self.prefix] = metric
+
+
 def to_tensor(x):
     return np.transpose(x, (2, 0, 1))
 
@@ -51,7 +121,6 @@ def get_train_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
         albu.Resize(*size),
-        albu.ShiftScaleRotate(p=p),
         albu.ImageCompression(75, 99),
         albu.Flip(p=p),
         albu.ToFloat(255),

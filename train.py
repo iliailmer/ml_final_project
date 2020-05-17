@@ -1,3 +1,5 @@
+from torch.utils.data import DataLoader
+from catalyst.contrib.nn import RAdam, Lookahead
 import argparse
 import os
 import kornia
@@ -8,18 +10,27 @@ from glob import glob
 import numpy as np
 from albumentations import (
     Compose, Resize, VerticalFlip, HorizontalFlip, ImageCompression,
-    ToFloat
+    ToFloat, ToGray, ToSepia, Normalize
 )
+
 from albumentations.pytorch import ToTensorV2
 import pandas as pd
-from models import ENet
+from models import ENet, SRNet, WideOrthoResNet, Model
+from torchvision.models import resnext50_32x4d, resnet101
+from resnest.torch import resnest50
 from dataset import ALASKAData, ALASKATestData
 from catalyst.utils import set_global_seed
 import torch
 set_global_seed(2020)
 torch.cuda.manual_seed(2020)
 torch.backends.cudnn.deterministic = True
+# TODO: make notebooks with image processing:
+# different color channels, dct, fft, etc
 
+# TODO: test out EfficientNet-B0 with a different data sampling.
+# possibly random train_test_split (stratified by labels.)
+# TODO: Run Leaning rate finder on all models?
+# TODO: add mixed precision training
 parser = argparse.ArgumentParser()
 
 # size of data subsample
@@ -47,23 +58,23 @@ val_size = int(sample_size*0.25)
 train_fn, val_fn = [], []
 train_labels, val_labels = [], []
 
-train_filenames = sorted(glob(f"{data_dir}/Cover/*.jpg")[:sample_size])
-np.random.shuffle(train_filenames)
+cover_filenames = sorted(glob(f"{data_dir}/Cover/*.jpg")[:sample_size])
+np.random.shuffle(cover_filenames)
 
-train_fn.extend(train_filenames[val_size:])
-train_labels.extend(np.zeros(len(train_filenames[val_size:],)))
+train_fn.extend(cover_filenames[val_size:])
+train_labels.extend(np.zeros(len(cover_filenames[val_size:],)))
 
-val_fn.extend(train_filenames[:val_size])
-val_labels.extend(np.zeros(len(train_filenames[:val_size],)))
+val_fn.extend(cover_filenames[:val_size])
+val_labels.extend(np.zeros(len(cover_filenames[:val_size],)))
 
 folder_names = ['JMiPOD/', 'JUNIWARD/', 'UERD/']
 for label, folder in enumerate(folder_names):
-    train_filenames = sorted(glob(f"{data_dir}/{folder}/*.jpg")[:sample_size])
-    np.random.shuffle(train_filenames)
-    train_fn.extend(train_filenames[val_size:])
-    train_labels.extend(np.zeros(len(train_filenames[val_size:],))+label+1)
-    val_fn.extend(train_filenames[:val_size])
-    val_labels.extend(np.zeros(len(train_filenames[:val_size],))+label+1)
+    cover_filenames = sorted(glob(f"{data_dir}/{folder}/*.jpg")[:sample_size])
+    np.random.shuffle(cover_filenames)
+    train_fn.extend(cover_filenames[val_size:])
+    train_labels.extend(np.zeros(len(cover_filenames[val_size:],))+label+1)
+    val_fn.extend(cover_filenames[:val_size])
+    val_labels.extend(np.zeros(len(cover_filenames[:val_size],))+label+1)
 
 assert len(train_labels) == len(train_fn), "wrong labels"
 assert len(val_labels) == len(val_fn), "wrong labels"
@@ -78,21 +89,17 @@ print(train_df.sample(10))
 
 
 img_size = (args.img, args.img)
-AUGMENTATIONS_TRAIN = Compose([
-    # few images are not 512x512. does nothing if it's alread 512.
+train_aug = Compose([
     Resize(*img_size, p=1),
     VerticalFlip(p=0.5),
     HorizontalFlip(p=0.5),
-    ImageCompression(quality_lower=75, quality_upper=100,
-                     p=0.5),
-    ToFloat(max_value=255),
+    Normalize(),
     ToTensorV2()
 ], p=1)
-
-
-AUGMENTATIONS_TEST = Compose([
+valid_aug = Compose([
     Resize(*img_size, p=1),  # does nothing if it's alread 512.
-    ToFloat(max_value=255),
+    # ToFloat(max_value=255),
+    Normalize(),
     ToTensorV2()
 ], p=1)
 
@@ -100,29 +107,33 @@ AUGMENTATIONS_TEST = Compose([
 batch_size = args.bs
 num_workers = args.nw
 lr = args.lr
-train_dataset = ALASKAData(train_df, augmentations=AUGMENTATIONS_TRAIN)
-valid_dataset = ALASKAData(val_df, augmentations=AUGMENTATIONS_TEST)
+# train_dataset = ALASKAData(train_df, augmentations=train_aug)
+# valid_dataset = ALASKAData(val_df, augmentations=valid_aug)
+train_loader = DataLoader(ALASKAData(train_df,
+                                     augmentations=train_aug),
+                          batch_size=batch_size,
+                          num_workers=num_workers,
+                          shuffle=True)
 
-train_loader = torch.utils.data.DataLoader(train_dataset,
-                                           batch_size=batch_size,
-                                           num_workers=num_workers,
-                                           shuffle=True)
-
-valid_loader = torch.utils.data.DataLoader(valid_dataset,
-                                           batch_size=batch_size*2,
-                                           num_workers=num_workers,
-                                           shuffle=False)
+valid_loader = DataLoader(ALASKAData(val_df,
+                                     augmentations=valid_aug),
+                          batch_size=batch_size,
+                          num_workers=num_workers,
+                          shuffle=False)
 device = 'cuda'
-model = ENet().to(device)
-model.load_state_dict(torch.load(
-    'epoch_9_val_loss_0.991_auc_0.792.pth'))
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=args.wd)
+model = ENet(name='efficientnet-b0').cuda()
+optimizer = Lookahead(RAdam(model.parameters(),
+                            lr=lr,
+                            weight_decay=args.wd))
 criterion = torch.nn.CrossEntropyLoss()
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, factor=0.5, patience=3)
+# model.load_state_dict(torch.load(
+# 'epoch_9_val_loss_0.991_auc_0.792.pth'))
+scheduler = torch.optim.lr_scheduler\
+    .ReduceLROnPlateau(optimizer, mode='max', factor=0.75, patience=5)
 num_epochs = args.e
 train_loss, val_loss = [], []
-
+best_score = 0.6
+optimizer.zero_grad()
 for epoch in range(num_epochs):
     print('Epoch {}/{}'.format(epoch+1, num_epochs))
     print('-' * 10)
@@ -177,10 +188,11 @@ for epoch in range(num_epochs):
         auc_score = alaska_weighted_auc(y_true, bin_proba)
     print(
         f'Val Loss: {epoch_loss:.3}, Weighted AUC:{auc_score:.3}, Acc: {acc:.3}')
-    scheduler.step(acc)
-
-    torch.save(model.state_dict(),
-               f"epoch_{epoch}_val_loss_{epoch_loss:.3}_auc_{auc_score:.3}.pth")
+    scheduler.step(auc_score)
+    if auc_score > best_score:
+        best_score = auc_score
+        torch.save(model.state_dict(),
+                   f"effnet0_epoch_{epoch}_auc_{auc_score:.3}.pth")
 
 
 test_filenames = sorted(glob(f"{data_dir}/Test/*.jpg"))
@@ -189,7 +201,7 @@ test_df = pd.DataFrame({'ImageFileName': list(
 
 batch_size = 1
 num_workers = 4
-test_dataset = ALASKATestData(test_df, augmentations=AUGMENTATIONS_TEST)
+test_dataset = ALASKATestData(test_df, augmentations=valid_aug)
 test_loader = torch.utils.data.DataLoader(test_dataset,
                                           batch_size=batch_size,
                                           num_workers=num_workers,

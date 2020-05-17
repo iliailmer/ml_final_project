@@ -1,0 +1,112 @@
+\documentclass[letterpaper]{article}
+\usepackage{a4wide}
+\usepackage{arxiv}
+\usepackage[OT1]{fontenc} 
+\usepackage{hyperref}   
+\usepackage{bookmark}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsmath,amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{lipsum}
+\usepackage{graphicx}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\xvec}{\mathrm{x}}
+\usepackage[backend=biber]{biblatex}
+\addbibresource{references.bib}
+\title{ALASKA2: Image Steganalysis Competition. A Final Project Proposal}
+
+\author{
+    Ilia Ilmer \\
+  Graduate Center CUNY \\
+  Department of Computer Science \\
+  \texttt{iilmer@gradcenter.cuny.edu} \\
+}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+    In May of 2020, Troy University of Technology organized a competition on Kaggle.com titled ``ALASKA2: Detect secret data hidden within digital images''. The goal of the competition is to predict presence of hidden data in a particular image.
+    In this project, we will identify reliable and promising convolutional neural network based models that will help me in solving the task. I will define the task as a multi-class classification problem to simplify the approach. In the process of solving the problem we will apply various deep learning training techniques in order to maximize the score.
+\end{abstract}
+
+\section{Introduction}
+
+Steganalysis is a scientific discipline that studies various forms of data in order to determine whether or not a secret message is concealed in that data. It allows communication through means that are indistinguishable from regular exchanges of information. Researchers working on discovering hidden information through steganalysis use setups that do not necessarily resemble real-life occurrences. The aspects of message encoding such as methods and parameters used are often known in advance, the data is clean, taken from a single resource using the same camera settings for all images.
+
+In real life, message decoding is a much harder task to solve. This competition aims to simulate a realistic scenario in which 3 types of encoding are used. A dataset 75,000 unique 512 by 512 color images have been used as a cover for secret messages. The data were obtained from different sources with different quality settings.
+
+There are three unique ways the message is encoded into the image for us, JMiPOD~\cite{jmipod}, JUNIWARD~\cite{juniward}, and UERD~\cite{uerd}. Each method is applied to all 75,000 original covers creating in total 225,000 images that have encodings of different types. Encoding is done using the JPEG compression algorithm. More specifically, during the JPEG compression, the message is encoded through DCT coefficients and is hidden from the viewer.
+
+The JUNIWARD algorithm is exploiting the linearity of discrete cosine transform and linear transformation of Gaussian random variables. In order to minimize detectability, the algorithm solves an optimization problem with respect to pixel values obtained from inverse DCT.\@JMiPOD method utilizes the approach of bitwise encoding. The image is converted to binary codes and the message is encoded into these codes bitwise. Finally, UERD also utilizes DCT coefficients during encoding.
+
+The following report is organized as follows. We formulate a machine learning problem presented to us as a multi-class classification task in section 2. In section 3 we perform simple data exploration and analysis. In section 4, we describe the model selection algorithm and hyperparameter tuning as well as the training setup and tricks. In that same section we also report the results of the training and the leaderboard score obtained so far. Finally, we list further ways of improvement in the final section.
+
+\section{Task Formulation}
+
+Let us outline the initial idea for the project and possible improvements. As the competition deals with images, we should take advantage of reliable neural network architectures available as parts of PyTorch or Tensorflow packages. Advanced architectures can to catch intricate differences between an image with one encoding or another. I would like to pose the problem as a 4-class classification task in the following manner.
+
+Consider a dataset of 300,000 images of which there are 4 classes
+\[ \begin{cases}
+        0 -\text{cover},     \\
+        1 - \text{jmipod},   \\
+        2 - \text{juniward}, \\
+        3 - \text{uerd}.
+    \end{cases} \]
+The classes arise naturally in this setting and, furthermore, they are perfectly balanced and we need not worry about imbalanced data when sampling.
+We will then train a neural network \( \F \) on this collection of images \( \X = \{ \xvec_k: k=0,1,2,3 \} \) to maximize the key metric of the competition: area under ROC curve with weights. As per the competition requirements, the submission's true positive rate values between 0 and 0.4 have weight 2 while the rest carry weight 1.
+
+To summarize, we must maximize the weighted-AUC metric on a 4-class classification problem in this setup for the competition.
+
+\section{Data Exploration}
+
+Let us discuss the data in question. We are studying 300,000 RGB images of size 512 by 512 pixels. For 75,000 of those images no hidden message is encoded, on the other three images, the encoding corresponds to one of three types, JMiPOD~\cite{jmipod}, JUNIWARD~\cite{juniward}, or UERD~\cite{uerd}. Each encoding utilizes the JPEG compression process and encodes the information into the DCT coefficients. This allows the message to remain hidden so much so that the difference is not reflected in the spatial domain.
+
+In the competition description~\cite{alaska2}, the organizers provide some basic information about the data. We know that all steganalysis algorithms are applied with the same probability and that the average message length is 0.4 bits per DCT coefficient.
+
+\subsection{Examples of data}
+% show random images
+
+% show no difference in rgb pixels
+
+% sho difference in YCrCb per channel
+
+% show difference in DCT Coefficients
+
+\section{Model Selection}
+
+\subsection{Deep Neural Networks}
+
+The first model we consider is the EfficientNet~\cite{tan2019efficientnet} model which is most widely used by the competitors.
+This network beats state of the art results in classification and was created through an automatic architecture search algorithm. There are several versions of the network with increasing complexity and computational requirements. In this work we will experiment with a pre-trained EfficientNet-B0~\cite{tan2019efficientnet}. The network's implementation is supplied as a PyTorch based Python package available for install. The implementation provided also utilizes Swish activation function. This function was first introduced in~\cite{ramachandran2017searching} where authors considered multiple candidate-functions. Swish activation function is defined as follows
+
+\[ Swish(x) = x\cdot \sigma(x), \]
+where \( \sigma  \) is the sigmoid function.
+
+% In this problem one must be very careful using model selection techniques such as train-test splitting and K-Fold cross-validation. The data exemplars come in pairs, or 4-tuples, rather. For each cover message
+
+% For this competition, several models have been attempted. First attempted model was a ResNext network~\cite{xie2017}. The reasoning behind the option was the way a ResNext architecture is organized. We may be interested in not only general feature extracting properties of a network but also in the properties of each individual channel and it's contribution. ResNext utilizes grouped convolutions which would be a good way to lear hidden representations channel-wise and then combine.
+
+% From simple preliminary experiments using this mode, we observed that it is quite memory consuming. this model were disappointing. As a small experiment, a small subsample of the data was considered in order to see if the network could overfit. In practice, one should test the architecture on the small dataset first and see if it can overfit. Unfortunately, in this situation the network was unable to overfit. Different learning rates and regularization strategies were used such as increasing and decreasing learning rate periodically using cosine annealing with restarts~\cite{loshchilov2016sgdr}, using various weight decay rates and augmentations.
+
+% In an attempt to replace the architecture, a DCT-coefficient based model was considered~\cite{ulicny2018harmonic}. This model replaces the regular convolutional filters that are trainable with fixed DCT-based filter banks. Each filter bank is applied to an image through cross-correlation and then the results are linearly combined into the desired number of output channels. The coefficients in the linear combination are learnable and this operation is actually implemented through 1 by 1 convolution. The architecture encountered a slightly different problem. While we were unable to observe improvement in training after several epoch by monitoring the accuracy and the training metric, the network of sufficient depth would require too much GPU memory.
+
+\subsection{Hyperparameter choosing}
+
+\subsection{Training setup}
+\begin{enumerate}
+    \item \emph{Gradient accumulation:}
+    \item \emph{YCrCb color model:}
+    \item \emph{Network }
+\end{enumerate}
+
+\subsubsection{Metric}
+
+\section{Results}
+
+\section{Conclusion}
+
+\printbibliography{}
+\end{document}
