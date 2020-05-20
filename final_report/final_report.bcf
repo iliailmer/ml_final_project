@@ -2192,6 +2192,17 @@
     <bcf:citekey order="8">tan2019efficientnet</bcf:citekey>
     <bcf:citekey order="9">tan2019efficientnet</bcf:citekey>
     <bcf:citekey order="10">ramachandran2017searching</bcf:citekey>
+    <bcf:citekey order="11">zhang2020resnest</bcf:citekey>
+    <bcf:citekey order="12">he2016deep</bcf:citekey>
+    <bcf:citekey order="13">catalyst</bcf:citekey>
+    <bcf:citekey order="14">liu2019variance</bcf:citekey>
+    <bcf:citekey order="15">zhang2019lookahead</bcf:citekey>
+    <bcf:citekey order="16">yousfi2019breaking</bcf:citekey>
+    <bcf:citekey order="17">smith2017don</bcf:citekey>
+    <bcf:citekey order="18">wu2018group</bcf:citekey>
+    <bcf:citekey order="19">singh2019filter</bcf:citekey>
+    <bcf:citekey order="20">boroumand2018deep</bcf:citekey>
+    <bcf:citekey order="21">yousfi2019breaking</bcf:citekey>
   </bcf:section>
   <!-- SORTING TEMPLATES -->
   <bcf:sortingtemplate name="nty">

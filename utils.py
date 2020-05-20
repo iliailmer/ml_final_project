@@ -17,6 +17,8 @@ from catalyst.dl.callbacks import MetricManagerCallback, MetricCallback
 
 
 def alaska_weighted_auc(y_true, y_valid):
+    # implementation from
+    # https://www.kaggle.com/anokas/weighted-auc-metric-updated
     tpr_thresholds = [0.0, 0.4, 1.0]
     weights = [2,   1]
 
@@ -120,8 +122,6 @@ def to_tensor(x):
 def get_train_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
-        albu.Resize(*size),
-        albu.ImageCompression(75, 99),
         albu.Flip(p=p),
         albu.ToFloat(255),
         ToTensorV2()  # albu.Lambda(image=to_tensor)
@@ -131,7 +131,6 @@ def get_train_augm(size=Tuple[int, int],
 def get_valid_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
-        albu.Resize(*size),
         albu.ToFloat(255),
         ToTensorV2()  # albu.Lambda(image=to_tensor)
     ])

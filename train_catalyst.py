@@ -1,39 +1,30 @@
-from catalyst.contrib.nn import FocalLossMultiClass
-from torch import nn
-import albumentations as albu
-from torch import optim
-import warnings
-from torch.utils.data import DataLoader
+# TODO Pretrain on data again and SAVE THIS TIME
+
+from typing import Iterable, Union, List
 import argparse
-import kornia
-from torch.nn import functional as F
-from tqdm.auto import tqdm
-from utils import alaska_weighted_auc_modified
-from glob import glob
-from albumentations import (
-    Compose, Resize, VerticalFlip, HorizontalFlip, ImageCompression,
-    ToFloat, ToGray, ToSepia, Normalize
-)
-from albumentations.pytorch import ToTensorV2
-from models import ENet, SRNet, WideOrthoResNet
-from resnest.torch import resnest101
-from dataset import ALASKAData2, ALASKATestData
-from catalyst import utils
-import torch
-import seaborn as sns
-from catalyst.contrib.nn import RAdam, Lookahead
-from catalyst.dl.callbacks import (
-    AccuracyCallback,
-    OptimizerCallback,
-    MetricCallback
-)
-from catalyst.dl import SupervisedRunner
-import pandas as pd
-import cv2
-import numpy as np
-from scipy import fftpack
 import os
-import matplotlib.pyplot as plt
+import warnings
+from glob import glob
+
+import albumentations as albu
+import numpy as np
+import pandas as pd
+import torch
+from albumentations.pytorch import ToTensorV2
+from catalyst import utils
+from catalyst.contrib.nn import Lookahead, RAdam
+from catalyst.dl import SupervisedRunner
+from catalyst.dl.callbacks import AccuracyCallback, OptimizerCallback
+from resnest.torch import resnest50
+from torch import nn, optim
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
+import kornia
+from dataset import ALASKAData2, ALASKATestData
+from models import ENet, Model, Swish
+from utils import alaska_weighted_auc_modified, replace
 
 parser = argparse.ArgumentParser()
 
@@ -56,22 +47,31 @@ parser.add_argument("-acc", type=int, default=1)
 parser.add_argument("-test", type=int, default=0)
 args = parser.parse_args()
 
-data_dir = '../input/alaska2-image-steganalysis'
+data_dir = f'../input/alaska2-image-steganalysis'
 sample_size = args.sample
 val_size = int(sample_size*0.25)
 
+offset = 0  # 20000
 
-jmipod = sorted([f'../input/alaska2-image-steganalysis/JMiPOD/{x}'
-                 for x in os.listdir('../input/alaska2-image-steganalysis/JMiPOD/')],
-                key=lambda x: x.split('/')[-1].split('.')[0])[:sample_size]
-juniward = sorted([f'../input/alaska2-image-steganalysis/JUNIWARD/{x}'
-                   for x in os.listdir('../input/alaska2-image-steganalysis/JUNIWARD/')])[:sample_size]
-uerd = sorted([f'../input/alaska2-image-steganalysis/UERD/{x}'
-               for x in os.listdir('../input/alaska2-image-steganalysis/UERD/')])[:sample_size]
-covers = sorted([f'../input/alaska2-image-steganalysis/Cover/{x}'
-                 for x in os.listdir('../input/alaska2-image-steganalysis/Cover/')])[:sample_size]
-test = [f'../input/alaska2-image-steganalysis/Test/{x}'
-        for x in os.listdir('../input/alaska2-image-steganalysis/Test/')]
+
+def get_key(x):
+    return x.split('/')[-1].split('.')[0]
+
+
+jmipod = sorted([f'{data_dir}/JMiPOD/{x}'
+                 for x in os.listdir(f'{data_dir}/JMiPOD/')],
+                key=get_key)[offset:offset+sample_size]
+juniward = sorted([f'{data_dir}/JUNIWARD/{x}'
+                   for x in os.listdir(
+                       f'{data_dir}/JUNIWARD/')])[offset:offset+sample_size]
+uerd = sorted([f'{data_dir}/UERD/{x}'
+               for x in os.listdir(
+                   f'{data_dir}/UERD/')])[offset:offset+sample_size]
+covers = sorted([f'{data_dir}/Cover/{x}'
+                 for x in os.listdir(
+                     f'{data_dir}/Cover/')])[offset:offset+sample_size]
+test = [f'{data_dir}/Test/{x}'
+        for x in os.listdir(f'{data_dir}/Test/')]
 
 labels = {f'{id}': 0 for id in covers}
 labels.update({f'{id}': 1 for id in jmipod})
@@ -82,16 +82,20 @@ items = np.array(list(labels.items()))
 np.random.shuffle(items)
 labels = {idx_: int(label) for (idx_, label) in items}
 
-
-jmipod_val = sorted([f'../input/alaska2-image-steganalysis/JMiPOD/{x}'
-                     for x in os.listdir('../input/alaska2-image-steganalysis/JMiPOD/')],
-                    key=lambda x: x.split('/')[-1].split('.')[0])[sample_size:val_size+sample_size]
-juniward_val = sorted([f'../input/alaska2-image-steganalysis/JUNIWARD/{x}'
-                       for x in os.listdir('../input/alaska2-image-steganalysis/JUNIWARD/')])[sample_size:val_size+sample_size]
-uerd_val = sorted([f'../input/alaska2-image-steganalysis/UERD/{x}'
-                   for x in os.listdir('../input/alaska2-image-steganalysis/UERD/')])[sample_size:val_size+sample_size]
-covers_val = sorted([f'../input/alaska2-image-steganalysis/Cover/{x}'
-                     for x in os.listdir('../input/alaska2-image-steganalysis/Cover/')])[sample_size:val_size+sample_size]
+val_offset = offset+sample_size
+jmipod_val = sorted([f'{data_dir}/JMiPOD/{x}'
+                     for x in os.listdir(
+                         f'{data_dir}/JMiPOD/')],
+                    key=get_key)[val_offset:val_size+val_offset]
+juniward_val = sorted([f'{data_dir}/JUNIWARD/{x}'
+                       for x in os.listdir(
+                           f'{data_dir}/JUNIWARD/')])[val_offset:val_size+val_offset]
+uerd_val = sorted([f'{data_dir}/UERD/{x}'
+                   for x in os.listdir(
+                       f'{data_dir}/UERD/')])[val_offset:val_size+val_offset]
+covers_val = sorted([f'{data_dir}/Cover/{x}'
+                     for x in os.listdir(
+                         f'{data_dir}/Cover/')])[val_offset:val_size+val_offset]
 
 labels_val = {f'{id}': 0 for id in covers_val}
 labels_val.update({f'{id}': 1 for id in jmipod_val})
@@ -113,16 +117,18 @@ p = 0.5
 train_data = DataLoader(
     ALASKAData2(
         train_keys, labels, albu.Compose([
-            albu.Resize(*size),
+            # albu.Resize(*size),
             albu.HorizontalFlip(p=p),
             albu.VerticalFlip(p=p),
+            albu.Normalize(),
             ToTensorV2()
         ])
     ), batch_size=args.bs, shuffle=True, num_workers=args.nw)
 val_data = DataLoader(
     ALASKAData2(
         val_keys, labels_val, albu.Compose([
-            albu.Resize(*size),
+            # albu.Resize(*size),
+            albu.Normalize(),
             ToTensorV2()
         ])
     ), batch_size=16, shuffle=False, num_workers=args.nw
@@ -133,8 +139,8 @@ test_df = pd.DataFrame({'ImageFileName': list(
 
 test_dataset = DataLoader(
     ALASKATestData(test_df, augmentations=albu.Compose([
-        albu.Resize(*size),
-        albu.ToFloat(),
+        # albu.CenterCrop()
+        albu.Normalize(),
         ToTensorV2()
     ])
     ),
@@ -148,50 +154,58 @@ utils.prepare_cudnn(deterministic=True)
 loaders = {'train': train_data,
            'valid': val_data}
 criterion = nn.CrossEntropyLoss()
-model = ENet('efficientnet-b0')
+
+model = Model(resnest50(True))  # SRNet(3)  # ENet('efficientnet-b0')
+replace(model, nn.ReLU, Swish, 'relu')
+# for i, layer in enumerate(effnet.layers):
+#     if "batch_normalization" in layer.name:
+#         effnet.layers[i] = GroupNormalization(groups=2, axis=-1, epsilon=0.1)
+# model.load_state_dict(torch.load(
+#     'logs/checkpoints/best.pth')['model_state_dict'])
 print(model)
-optimizer = optim.AdamW(
-    model.parameters(), lr=args.lr, weight_decay=args.wd)
+optimizer = Lookahead(RAdam(
+    model.parameters(), lr=args.lr, weight_decay=args.wd))
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, factor=0.25, patience=2)
+    optimizer, factor=0.25, patience=3)
 num_epochs = args.e
-logdir = "./logs"
-fp16_params = dict(opt_level="O1")
+logdir = "./logs/resnest50"
+fp16_params = None  # dict(opt_level="O1")
 runner = SupervisedRunner(device='cuda')
 
 
-runner.train(model=model,
-             criterion=criterion,
-             # scheduler=scheduler,
-             optimizer=optimizer,
-             loaders=loaders,
-             callbacks=[
-                 # wAUC(),
-                 AccuracyCallback(prefix='ACC'),
-                 OptimizerCallback(accumulation_steps=args.acc)],
-             logdir='./logs',
-             num_epochs=num_epochs,
-             fp16=None,  # fp16_params,
-             verbose=True
-             )
+runner.train(
+    model=model,
+    criterion=criterion,
+    scheduler=scheduler,
+    optimizer=optimizer,
+    loaders=loaders,
+    callbacks=[
+        # wAUC(),
+        AccuracyCallback(prefix='ACC'),
+        OptimizerCallback(accumulation_steps=args.acc)],
+    logdir=logdir,
+    num_epochs=num_epochs,
+    fp16=fp16_params,
+    verbose=True
+)
 if args.test > 0:
-    test_preds_proba = []
+    test_preds_proba: Union[List, Iterable, np.ndarray] = []
     model.eval()
     progress_bar_test = tqdm(test_dataset)
     with torch.no_grad():
         for i, im in enumerate(progress_bar_test):
             inputs = im.to('cuda')
-            # flip vertical
+            # flip horizontal
             im = kornia.augmentation.F.hflip(inputs)
             outputs = model(im)
-            # fliplr
+            # flip vertical
             im = kornia.augmentation.F.vflip(inputs)
             outputs = (0.25*outputs + 0.25*model(im))
             outputs = (outputs + 0.5*model(inputs))
             test_preds_proba.extend(F.softmax(outputs, 1).cpu().numpy())
 
     model.load_state_dict(torch.load(
-        'logs/checkpoints/best.pth')['model_state_dict'])
+        f'{logdir}/checkpoints/best.pth')['model_state_dict'])
     test_preds_proba = np.array(test_preds_proba)
     labels = test_preds_proba.argmax(1)
     bin_proba_test = np.zeros((len(test_preds_proba),))
@@ -199,147 +213,6 @@ if args.test > 0:
     bin_proba_test[labels != 0] = temp.sum(1)
     bin_proba_test[labels == 0] = test_preds_proba[labels == 0, 0]
     sub = pd.read_csv(
-        '../input/alaska2-image-steganalysis/sample_submission.csv')
+        f'{data_dir}/sample_submission.csv')
     sub['Label'] = bin_proba_test
-    sub.to_csv('submission_catalyst_b0.csv', index=False)
-
-# train_fn, val_fn = [], []
-# train_labels, val_labels = [], []
-
-# cover_filenames = sorted(glob(f"{data_dir}/Cover/*.jpg")[:sample_size])
-# np.random.shuffle(cover_filenames)
-
-# train_fn.extend(cover_filenames[val_size:])
-# train_labels.extend(np.zeros(len(cover_filenames[val_size:],)))
-
-# val_fn.extend(cover_filenames[:val_size])
-# val_labels.extend(np.zeros(len(cover_filenames[:val_size],)))
-
-# folder_names = ['JMiPOD/', 'JUNIWARD/', 'UERD/']
-# for label, folder in enumerate(folder_names):
-#     cover_filenames = sorted(glob(f"{data_dir}/{folder}/*.jpg")[:sample_size])
-#     np.random.shuffle(cover_filenames)
-#     train_fn.extend(cover_filenames[val_size:])
-#     train_labels.extend(np.zeros(len(cover_filenames[val_size:],))+label+1)
-#     val_fn.extend(cover_filenames[:val_size])
-#     val_labels.extend(np.zeros(len(cover_filenames[:val_size],))+label+1)
-
-# assert len(train_labels) == len(train_fn), "wrong labels"
-# assert len(val_labels) == len(val_fn), "wrong labels"
-
-# train_df = pd.DataFrame({'ImageFileName': train_fn, 'Label': train_labels},
-#                         columns=['ImageFileName', 'Label'])
-# train_df['Label'] = train_df['Label'].astype(int)
-# val_df = pd.DataFrame({'ImageFileName': val_fn, 'Label': val_labels}, columns=[
-#                       'ImageFileName', 'Label'])
-# val_df['Label'] = val_df['Label'].astype(int)
-# print(train_df.sample(10))
-
-
-# img_size = (args.img, args.img)
-# train_aug = Compose([
-#     Resize(*img_size, p=1),
-#     VerticalFlip(p=0.5),
-#     HorizontalFlip(p=0.5),
-#     Normalize(),
-#     ToTensorV2()
-# ], p=1)
-# valid_aug = Compose([
-#     Resize(*img_size, p=1),  # does nothing if it's alread 512.
-#     # ToFloat(max_value=255),
-#     Normalize(),
-#     ToTensorV2()
-# ], p=1)
-
-
-# batch_size = args.bs
-# num_workers = args.nw
-# lr = args.lr
-# # train_dataset = ALASKAData(train_df, augmentations=train_aug)
-# # valid_dataset = ALASKAData(val_df, augmentations=valid_aug)
-# train_loader = DataLoader(ALASKAData(train_df,
-#                                      augmentations=train_aug),
-#                           batch_size=batch_size,
-#                           num_workers=num_workers,
-#                           shuffle=True)
-
-# valid_loader = DataLoader(ALASKAData(val_df,
-#                                      augmentations=valid_aug),
-#                           batch_size=batch_size,
-#                           num_workers=num_workers,
-#                           shuffle=False)
-
-# loaders = {'train': train_loader,
-#            'valid': valid_loader}
-# device = 'cuda'
-# model = ENet(name='efficientnet-b0').cuda()
-# optimizer = Lookahead(RAdam(model.parameters(),
-#                             lr=lr,
-#                             weight_decay=args.wd))
-# criterion = torch.nn.CrossEntropyLoss()
-
-# scheduler = torch.optim.lr_scheduler\
-#     .ReduceLROnPlateau(optimizer, mode='max', factor=0.75, patience=5)
-# num_epochs = args.e
-
-# # wAUCCallback = MetricCallback(prefix='wAUC',
-# #                               metric_fn=alaska_weighted_auc_modified,
-# #                               input_key='targets',
-# #                               output_key='logits'
-# #                               )
-# runner = SupervisedRunner(model, 'cuda')
-# runner.train(model=model,
-#              criterion=criterion,
-#              scheduler=scheduler,
-#              optimizer=optimizer,
-#              loaders=loaders,
-#              callbacks=[
-#                  wAUC(),
-#                  AccuracyCallback(num_classes=4),
-#                  OptimizerCallback(accumulation_steps=1)],
-#              logdir='./logs',
-#              num_epochs=num_epochs,
-#              fp16=dict(opt_level='O1'),
-#              verbose=True
-#              )
-
-# test_filenames = sorted(glob(f"{data_dir}/Test/*.jpg"))
-# test_df = pd.DataFrame({'ImageFileName': list(
-#     test_filenames)}, columns=['ImageFileName'])
-
-# batch_size = 1
-# num_workers = 4
-# test_dataset = ALASKATestData(test_df, augmentations=valid_aug)
-# test_loader = torch.utils.data.DataLoader(test_dataset,
-#                                           batch_size=batch_size,
-#                                           num_workers=num_workers,
-#                                           shuffle=False,
-#                                           drop_last=False)
-# model.eval()
-
-# test_preds_proba = []
-# progress_bar_test = tqdm(test_loader)
-# with torch.no_grad():
-#     for i, im in enumerate(progress_bar_test):
-#         inputs = im.to(device)
-#         # flip vertical
-#         im = kornia.augmentation.F.hflip(inputs)
-#         outputs = model(im)
-#         # fliplr
-#         im = kornia.augmentation.F.vflip(inputs)
-#         outputs = (0.25*outputs + 0.25*model(im))
-#         outputs = (outputs + 0.5*model(inputs))
-#         test_preds_proba.extend(F.softmax(outputs, 1).cpu().numpy())
-
-# test_preds_proba = np.array(test_preds_proba)
-# labels = test_preds_proba.argmax(1)
-# bin_proba_test = np.zeros((len(test_preds_proba),))
-# temp = test_preds_proba[labels != 0, 1:]
-# bin_proba_test[labels != 0] = temp.sum(1)
-# bin_proba_test[labels == 0] = test_preds_proba[labels == 0, 0]
-# test_df['Id'] = test_df['ImageFileName'].apply(lambda x: x.split(os.sep)[-1])
-# test_df['Label'] = bin_proba_test
-
-# test_df = test_df.drop('ImageFileName', axis=1)
-# test_df.to_csv('submission_eb3.csv', index=False)
-# print(test_df.head())
+    sub.to_csv('submission_catalyst_srnet.csv', index=False)
