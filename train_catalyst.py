@@ -14,8 +14,8 @@ from albumentations.pytorch import ToTensorV2
 from catalyst import utils
 from catalyst.contrib.nn import Lookahead, RAdam
 from catalyst.dl import SupervisedRunner
-from catalyst.dl.callbacks import AccuracyCallback, OptimizerCallback
-from resnest.torch import resnest50
+from catalyst.dl.callbacks import (
+    AccuracyCallback, OptimizerCallback, F1ScoreCallback, AUCCallback)
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -23,8 +23,7 @@ from tqdm.auto import tqdm
 
 import kornia
 from dataset import ALASKAData2, ALASKATestData
-from models import ENet, Model, Swish
-from utils import alaska_weighted_auc_modified, replace
+from models import ENet
 
 parser = argparse.ArgumentParser()
 
@@ -45,13 +44,14 @@ parser.add_argument("-e", type=int, default=10)
 # number of accumulation steps
 parser.add_argument("-acc", type=int, default=1)
 parser.add_argument("-test", type=int, default=0)
+parser.add_argument("-offset", type=int, default=0)
 args = parser.parse_args()
 
 data_dir = f'../input/alaska2-image-steganalysis'
 sample_size = args.sample
 val_size = int(sample_size*0.25)
 
-offset = 0  # 20000
+offset = args.offset  # 20000
 
 
 def get_key(x):
@@ -155,20 +155,14 @@ loaders = {'train': train_data,
            'valid': val_data}
 criterion = nn.CrossEntropyLoss()
 
-model = Model(resnest50(True))  # SRNet(3)  # ENet('efficientnet-b0')
-replace(model, nn.ReLU, Swish, 'relu')
-# for i, layer in enumerate(effnet.layers):
-#     if "batch_normalization" in layer.name:
-#         effnet.layers[i] = GroupNormalization(groups=2, axis=-1, epsilon=0.1)
-# model.load_state_dict(torch.load(
-#     'logs/checkpoints/best.pth')['model_state_dict'])
+model = ENet('efficientnet-b0')
 print(model)
 optimizer = Lookahead(RAdam(
     model.parameters(), lr=args.lr, weight_decay=args.wd))
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, factor=0.25, patience=3)
 num_epochs = args.e
-logdir = "./logs/resnest50"
+logdir = "./logs/effnet-b0"
 fp16_params = None  # dict(opt_level="O1")
 runner = SupervisedRunner(device='cuda')
 
@@ -181,6 +175,8 @@ runner.train(
     loaders=loaders,
     callbacks=[
         # wAUC(),
+        F1ScoreCallback(),
+        AUCCallback(num_classes=4),
         AccuracyCallback(prefix='ACC'),
         OptimizerCallback(accumulation_steps=args.acc)],
     logdir=logdir,
