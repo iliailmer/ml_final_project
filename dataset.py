@@ -38,8 +38,6 @@ class ALASKAData2(Dataset):
     def __getitem__(self, idx):
         if self.stage != 'test':
             image = cv2.imread(self.ids[idx])[..., ::-1]
-            image = cv2.cvtColor(
-                (image/255).astype(np.float32), cv2.COLOR_RGB2HSV)
             labels = self.labels[self.ids[idx]]
             if self.tfms:
                 image = self.tfms(image=image)['image']
