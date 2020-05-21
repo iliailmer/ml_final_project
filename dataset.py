@@ -7,29 +7,8 @@ import cv2
 import numpy as np
 
 
-class ALASKAData(Dataset):
-    def __init__(self, df, augmentations=None):
-
-        self.data = df
-        self.tfms = augmentations
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        path, label = self.data.loc[idx]
-        image = cv2.imread(path)[:, :, ::-1]
-        # image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        # image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        if self.tfms:
-            # Apply transformations
-            image = self.tfms(image=image)['image']
-            return image, label
-
-
 class ALASKATestData(Dataset):
     def __init__(self, df, augmentations=None):
-
         self.data = df
         self.tfms = augmentations
 
@@ -39,10 +18,7 @@ class ALASKATestData(Dataset):
     def __getitem__(self, idx):
         path = self.data.loc[idx][0]
         image = cv2.imread(path)[:, :, ::-1]
-        cv2.cvtColor(
-            (image/255).astype(np.float32), cv2.COLOR_RGB2HSV)
         if self.tfms:
-            # Apply transformations
             image = self.tfms(image=image)['image']
             return image
 

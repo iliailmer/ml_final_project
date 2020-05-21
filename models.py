@@ -39,14 +39,14 @@ class ENet(nn.Module):
     def __init__(self, name: str):
         super().__init__()
         self.model = EfficientNet.from_pretrained(name)
-        # 1280 is the number of neurons in last layer. is diff for diff. architecture
-        self.dense_output = nn.Linear(1280, 4)
+        self.classifier = nn.Linear(1280, 4)
 
     def forward(self, x):
         feat = self.model.extract_features(x)
-        feat = nn.functional.avg_pool2d(
-            feat, feat.size()[2:]).reshape(-1, 1280)
-        return self.dense_output(feat)
+        feat = self.model._avg_pooling(feat)
+        feat = feat.view(x.shape[0], -1)
+        # feat = self.model._dropout(feat)
+        return self.classifier(feat)
 
 
 class LayerType1(nn.Module):
