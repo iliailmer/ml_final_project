@@ -2,3 +2,7 @@ logs
 __pycache__
 .mypy_cache
 *.pth
+train_from_kaggle.py
+train.py
+.ipynb_checkpoints
+frn.py
