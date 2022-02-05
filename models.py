@@ -1,10 +1,10 @@
-from torch.nn import functional as F
-import torch
 import numpy as np
-from torch import Tensor
-from torch import nn
-from swish import Swish
+import torch
 from efficientnet_pytorch import EfficientNet
+from torch import Tensor, nn
+from torch.nn import functional as F
+
+from swish import Swish
 
 
 class Model(nn.Module):
@@ -24,29 +24,68 @@ class Model(nn.Module):
             resnet_model.layer4,
             resnet_model.avgpool
         )
-        self.classifier = nn.Linear(2048, 4)
+        self.classifier = nn.Linear(resnet_model.fc.in_features, 4)
         nn.init.xavier_uniform_(self.classifier.weight)
 
     def forward(self, x):
         """Run Forward pass."""
+        if torch.isnan(x).any():
+            raise(ValueError("Found nan input"))
         x = self.features(x)
         x = x.view(x.shape[0], -1)
         x = self.classifier(x)
         return x
 
 
+class LabelSmoothing(nn.Module):
+    def __init__(self, smoothing=0.05):
+        super(LabelSmoothing, self).__init__()
+        self.confidence = 1.0 - smoothing
+        self.smoothing = smoothing
+
+    def forward(self, x, target):
+        if self.training:
+            x = x.float()
+            target = target.float()
+            logprobs = torch.nn.functional.log_softmax(x, dim=-1)
+
+            nll_loss = -logprobs * target
+            nll_loss = nll_loss.sum(-1)
+
+            smooth_loss = -logprobs.mean(dim=-1)
+
+            loss = self.confidence * nll_loss + self.smoothing * smooth_loss
+
+            return loss.mean()
+        else:
+            return torch.nn.functional.cross_entropy(x, target)
+
+
 class ENet(nn.Module):
-    def __init__(self, name: str):
+    def __init__(self, name: str, augment=False, dct=False):
         super().__init__()
         self.model = EfficientNet.from_pretrained(name)
-        self.classifier = nn.Linear(1280, 4)
+        # self.dct = dct
+        # if dct:
+        #     self.combine = nn.Sequential(
+        #         nn.Conv2d(in_channels=6,
+        #                   out_channels=3,
+        #                   kernel_size=3,
+        #                   stride=1,
+        #                   padding=1,
+        #                   groups=3),
+        #         Swish(),
+        #         nn.GroupNorm(num_groups=3, num_channels=3, eps=1e-6)
+        #     )
+        self.dense_output = nn.Linear(self.model._fc.in_features, 4)
 
     def forward(self, x):
+        # if self.dct:
+        #     x = self.combine(x)
         feat = self.model.extract_features(x)
-        feat = self.model._avg_pooling(feat)
-        feat = feat.view(x.shape[0], -1)
-        # feat = self.model._dropout(feat)
-        return self.classifier(feat)
+        feat = F.avg_pool2d(
+            feat, feat.size()[2:]).reshape(x.shape[0], self.dense_output.in_features)
+        return self.dense_output(feat)
 
 
 class LayerType1(nn.Module):

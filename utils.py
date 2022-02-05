@@ -1,6 +1,6 @@
 from catalyst.core import State
 import torch
-from dataset import ALASKAData
+# from dataset import ALASKAData
 import numpy as np
 import albumentations as albu
 from typing import Tuple, Dict, List
@@ -13,14 +13,15 @@ from torch.nn import functional as F
 from sklearn import metrics
 import numpy as np
 
-from catalyst.dl.callbacks import MetricManagerCallback, MetricCallback
+from catalyst.dl.callbacks import (
+    MetricManagerCallback, MetricCallback, Callback, CallbackOrder,
+    CallbackNode)
+from typing import Union, List, Dict
 
 
 def alaska_weighted_auc(y_true, y_valid):
-    # implementation from
-    # https://www.kaggle.com/anokas/weighted-auc-metric-updated
     tpr_thresholds = [0.0, 0.4, 1.0]
-    weights = [2,   1]
+    weights = [2, 1]
 
     fpr, tpr, thresholds = metrics.roc_curve(y_true, y_valid, pos_label=1)
 
@@ -35,47 +36,6 @@ def alaska_weighted_auc(y_true, y_valid):
         y_min = tpr_thresholds[idx]
         y_max = tpr_thresholds[idx + 1]
         mask = (y_min < tpr) & (tpr < y_max)
-        # pdb.set_trace()
-        x_padding = np.linspace(fpr[mask][-1], 1, 100)
-
-        x = np.concatenate([fpr[mask], x_padding])
-        y = np.concatenate([tpr[mask], [y_max] * len(x_padding)])
-        y = y - y_min  # normalize such that curve starts at y=0
-        score = metrics.auc(x, y)
-        submetric = score * weight
-        best_subscore = (y_max - y_min) * weight
-        competition_metric += submetric
-
-    return competition_metric / normalization
-
-
-def alaska_weighted_auc_modified(y_pred_proba, targets):
-    y_valid = np.zeros((len(y_pred_proba),))
-    temp = y_pred_proba[targets != 0, 1:]
-    y_valid[targets != 0] = temp.sum(1)
-    y_valid[targets == 0] = y_pred_proba[targets == 0, 0]
-    y_true = np.array(targets[:])
-    y_true[y_true != 0] = 1
-
-    tpr_thresholds = [0.0, 0.4, 1.0]
-    weights = [2,   1]
-
-    fpr, tpr, thresholds = metrics.roc_curve(y_true, y_valid, pos_label=1)
-
-    # size of subsets
-    areas = np.array(tpr_thresholds[1:]) - np.array(tpr_thresholds[:-1])
-
-    # The total area is normalized by the sum of weights such that the
-    # final weighted AUC is between 0 and 1.
-    normalization = np.dot(areas, weights)
-
-    competition_metric = 0
-    for idx, weight in enumerate(weights):
-        y_min = tpr_thresholds[idx]
-        y_max = tpr_thresholds[idx + 1]
-        mask = (y_min < tpr) & (tpr < y_max)
-        if mask.sum() == 0:
-            continue
 
         x_padding = np.linspace(fpr[mask][-1], 1, 100)
 
@@ -90,50 +50,67 @@ def alaska_weighted_auc_modified(y_pred_proba, targets):
     return competition_metric / normalization
 
 
-class wAUC(MetricCallback):
-    def __init__(self, prefix='wAUC',
-                 metric_fn=alaska_weighted_auc_modified,
-                 input_key='targets',
-                 output_key='logits'):
-        super().__init__(prefix, metric_fn,
-                         input_key=input_key,
-                         output_key=output_key)
-        self.y_true, self.val_preds_proba = [], []
+class AlaskaAUCCallback(Callback):
+    def __init__(
+        self,
+        prefix: str = "wauc",
+        input_key: Union[str, List[str], Dict[str, str]] = "targets",
+        output_key: Union[str, List[str], Dict[str, str]] = "logits",
+    ):
+        super().__init__(
+            order=CallbackOrder.Metric, node=CallbackNode.All
+        )
+        self.prefix = prefix
+        self.input_key = input_key
+        self.output_key = output_key
+        self.y_true = []
+        self.y_pred = []
+
+    def on_epoch_start(self, state: "State"):
+        self.y_true = []
+        self.y_pred = []
 
     def on_batch_end(self, state: State):
-        self.y_true.extend(
-            state.input['targets'].detach().cpu().numpy().astype(int))
-        self.val_preds_proba.extend(
-            F.softmax(state.output['logits'], 1).detach().cpu().numpy())
+        logits = state.output[self.output_key].detach().float()
+        targets = state.input[self.input_key].detach().cpu().numpy()
 
-    def on_epoch_end(self, state: State) -> None:
-        """Computes the metric and add it to batch metrics."""
-        self.val_preds_proba = np.array(self.val_preds_proba)
-        self.y_true = np.array(self.y_true)
-        metric = self.metric_fn(self.val_preds_proba,
-                                self.y_true) * self.multiplier
-        state.epoch_metrics[self.prefix] = metric
+        probabilities = F.softmax(logits, dim=1)
+        probabilities = probabilities.cpu().numpy()
+        preds = probabilities.argmax(axis=1)
+        new_preds = np.zeros((len(preds), 1))
+        new_preds[preds != 0, 0] = probabilities[preds != 0, 1:].sum(1)
+        new_preds[preds == 0, 0] = 1 - probabilities[preds == 0, 0]
+
+        self.y_pred.append(new_preds)
+        self.y_true.append(targets)
+
+    def on_epoch_end(self, state: "State"):
+        self.y_true = np.concatenate(self.y_true, axis=0)
+        self.y_pred = np.concatenate(self.y_pred, axis=0)
+
+        metric = alaska_weighted_auc(self.y_true, self.y_pred)
+        state.epoch_metrics[f"{state.loader_name}_{self.prefix}"] = metric
 
 
 def to_tensor(x):
     return np.transpose(x, (2, 0, 1))
 
 
-def get_train_augm(size=Tuple[int, int],
-                   p=0.5):
-    return albu.Compose([
-        albu.Flip(p=p),
-        albu.ToFloat(255),
-        ToTensorV2()  # albu.Lambda(image=to_tensor)
-    ])
+# def get_train_augm(size=Tuple[int, int],
+#                    p=0.5):
+#     return albu.Compose([
+#         albu.Flip(p=p),
+#         albu.ToFloat(255),
+#         ToTensorV2()  # albu.Lambda(image=to_tensor)
+#     ])
 
 
-def get_valid_augm(size=Tuple[int, int],
-                   p=0.5):
-    return albu.Compose([
-        albu.ToFloat(255),
-        ToTensorV2()  # albu.Lambda(image=to_tensor)
-    ])
+# def get_valid_augm(size=Tuple[int, int],
+#                    p=0.5):
+#     return albu.Compose([
+#         albu.ToFloat(255),
+#         ToTensorV2()  # albu.Lambda(image=to_tensor)
+#     ])
 
 
 def get_loader(dataframe, augm_func, size,

@@ -7,3 +7,4 @@ train.py
 .ipynb_checkpoints
 frn.py
 *.csv
+.vs*
